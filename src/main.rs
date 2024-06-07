@@ -1,113 +1,134 @@
-mod game;
+mod slot;
 
-use std::{collections::HashMap, io::stdin};
+use bevy::{prelude::*, window::PrimaryWindow, winit::WinitSettings};
+use slot::ShipType;
 
-use game::{Game, Ship};
+pub const WIDTH: usize = 21;
+pub const HEIGHT: usize = 6;
 
-fn read_line(line: &mut String) {
-    line.clear();
-    match stdin().read_line(line) {
-        Ok(_) => *line = line.trim().to_owned(),
-        Err(_) => line.clear(),
-    }
-}
-
-fn clear() {
-    print!("{}[2J", 27 as char);
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, States)]
+pub enum GameState {
+    #[default]
+    Placing,
+    Playing,
 }
 
 fn main() {
-    let mut game = Game::new();
-    let mut input = String::new();
-    clear();
-    let mut ships = HashMap::from([
-        (Ship::PatrolBoat, false),
-        (Ship::Submarine, false),
-        (Ship::Destroyer, false),
-        (Ship::Battleship, false),
-        (Ship::Carrier, false),
-    ]);
-    while game.is_placing() {
-        println!("Commands: [done], [exit], [random], [(P|S|D|B|C),x1,y1,x2,y2]");
-        game.print();
-        read_line(&mut input);
-        let input2 = input.to_uppercase();
-        let input3 = input2.split(' ').collect::<Vec<&str>>();
-        if let ["DONE"] = input3[..] {
-            if ships.values().all(|v| *v) {
-                game.play();
-            } else {
-                println!("You need to place all your boat before playing.");
+    App::new()
+        .init_state::<GameState>()
+        .add_plugins(DefaultPlugins)
+        .insert_resource(WinitSettings::desktop_app())
+        .add_systems(Startup, setup)
+        .add_systems(Update, drag_ship)
+        .run();
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.spawn(Camera2dBundle::default());
+    commands
+        .spawn(NodeBundle {
+            style: Style {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                ..default()
+            },
+            background_color: Color::BLACK.into(),
+            ..default()
+        })
+        .with_children(|parent| {
+            parent.spawn(NodeBundle {
+                style: Style {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                ..default()
+            });
+            for ship in [
+                ShipType::PatrolBoat,
+                ShipType::Submarine,
+                ShipType::Destroyer,
+                ShipType::Battleship,
+                ShipType::Carrier,
+            ] {
+                spawn_ship(parent, ship, &asset_server);
             }
-        } else if let ["EXIT"] = input3[..] {
-            println!("GOOD BYE");
-            return;
-        } else if let [ship, x1, y1, x2, y2] = input3[..] {
-            let Ok(ship) = Ship::try_from(ship) else {
-                println!("Command format error");
-                continue;
-            };
-            let Ok(x1) = x1.parse::<usize>() else {
-                println!("Command format error");
-                continue;
-            };
-            let Ok(y1) = y1.parse::<usize>() else {
-                println!("Command format error");
-                continue;
-            };
-            let Ok(x2) = x2.parse::<usize>() else {
-                println!("Command format error");
-                continue;
-            };
-            let Ok(y2) = y2.parse::<usize>() else {
-                println!("Command format error");
-                continue;
-            };
-            if game.place(ship, x1, y1, x2, y2).is_some() {
-                *ships.get_mut(&ship).expect("Must contains all ship") = true;
-                clear();
-            } else {
-                println!("Command format error or slot used");
+        });
+}
+
+#[allow(clippy::cast_lossless)]
+fn spawn_ship(parent: &mut ChildBuilder, ship: ShipType, asset_server: &Res<AssetServer>) {
+    parent
+        .spawn((
+            ButtonBundle {
+                style: Style {
+                    width: Val::Px(60.0),
+                    height: Val::Px(ship.len() as f32 * 50.),
+                    left: Val::Px(ship.id() as f32 * 100.),
+                    position_type: PositionType::Absolute,
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::rgba(0., 0., 0., 0.)),
+                ..default()
+            },
+            ship,
+        ))
+        .with_children(|parent| {
+            parent.spawn(ship.ressource(asset_server));
+        });
+}
+
+// fn spawn_board(parent: &mut ChildBuilder) {
+//     for i in 0..HEIGHT {
+//         parent.spawn((ButtonBundle {
+//             style: Style {
+//                 flex_direction: FlexDirection::Row,
+//                 align_items: AlignItems::Center,
+//                 ..default()
+//             },
+//             ..default()
+//         }, Slot));
+//     }
+// }
+
+static mut SELECTED: Option<u8> = None;
+
+#[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
+fn drag_ship(
+    mut ships: Query<(&Interaction, &mut Style, &ShipType), (With<Button>, With<ShipType>)>,
+    q_windows: Query<&Window, With<PrimaryWindow>>,
+) {
+    for (interaction, _, ship) in &mut ships {
+        let nid = ship.id();
+        if *interaction == Interaction::Pressed {
+            unsafe {
+                SELECTED = Some(nid);
             }
-        } else if let ["RANDOM"] = input3[..] {
-            game.random(&mut ships);
-            clear();
-        } else {
-            println!("Command not found");
+        } else if let Some(id) = unsafe { SELECTED } {
+            if id == nid {
+                unsafe {
+                    SELECTED = None;
+                }
+            }
         }
     }
-    while game.is_playing() {
-        println!("Commands: [exit], [x,y]");
-        game.print();
-        read_line(&mut input);
-        let input2 = input.to_uppercase();
-        let input3 = input2.split(' ').collect::<Vec<&str>>();
-        if let ["EXIT"] = input3[..] {
-            println!("GOOD BYE");
-            return;
-        } else if let [x, y] = input3[..] {
-            let Ok(x) = x.parse::<usize>() else {
-                println!("Command format error");
-                continue;
-            };
-            let Ok(y) = y.parse::<usize>() else {
-                println!("Command format error");
-                continue;
-            };
-            match game.hit(x, y) {
-                game::End::Error => println!("Command format error or slot used"),
-                game::End::Continue => clear(),
-                game::End::Win => {
-                    println!("You Win");
-                    break;
-                }
-                game::End::Lose => {
-                    println!("You Lose");
-                    break;
-                }
+
+    if let Some(id) = unsafe { SELECTED } {
+        for (_, mut style, ship) in &mut ships {
+            if id == ship.id() {
+                let Some(position) = q_windows.single().cursor_position() else {
+                    return;
+                };
+                let Val::Px(height) = style.height else {
+                    return;
+                };
+                let Val::Px(width) = style.width else {
+                    return;
+                };
+                style.top = Val::Px(position.y - height / 2.);
+                style.left = Val::Px(position.x - width / 2.);
             }
-        } else {
-            println!("Command not found");
         }
     }
 }
