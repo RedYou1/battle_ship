@@ -5,7 +5,7 @@ use bevy::{
     utils::default,
 };
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Component)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ShipType {
     PatrolBoat,
     Submarine,
@@ -49,11 +49,24 @@ impl ShipType {
     }
 }
 
-#[derive(Default, Clone, Copy, PartialEq)]
-pub enum Slot {
-    #[default]
-    None,
-    NoneShot,
-    Ship(ShipType),
-    Hit(ShipType),
+#[derive(Clone, Copy, PartialEq)]
+pub enum Dir {
+    Vertical,
+    Horizontal,
+}
+
+#[derive(Clone, Copy, PartialEq, Component)]
+pub struct Ship {
+    pub placed: bool,
+    pub x: u8,
+    pub y: u8,
+    pub dir: Dir,
+    pub type_: ShipType,
+}
+
+#[derive(Clone, Copy, PartialEq, Component)]
+#[allow(clippy::module_name_repetitions)]
+pub struct SelectSlot {
+    pub x: u8,
+    pub y: u8,
 }

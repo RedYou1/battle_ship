@@ -1,10 +1,10 @@
 mod slot;
 
 use bevy::{prelude::*, window::PrimaryWindow, winit::WinitSettings};
-use slot::ShipType;
+use slot::{Dir, SelectSlot, Ship, ShipType};
 
-pub const WIDTH: usize = 21;
-pub const HEIGHT: usize = 6;
+pub const WIDTH: u8 = 21;
+pub const HEIGHT: u8 = 8;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, States)]
 pub enum GameState {
@@ -23,7 +23,7 @@ fn main() {
         .run();
 }
 
-#[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::needless_pass_by_value, clippy::cast_lossless)]
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn(Camera2dBundle::default());
     commands
@@ -37,23 +37,66 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             ..default()
         })
         .with_children(|parent| {
-            parent.spawn(NodeBundle {
-                style: Style {
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
+            parent
+                .spawn(NodeBundle {
+                    style: Style {
+                        width: Val::Percent(80.),
+                        height: Val::Percent(50.),
+                        top: Val::Percent(40.),
+                        left: Val::Percent(10.),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
                     ..default()
-                },
-                ..default()
-            });
-            for ship in [
-                ShipType::PatrolBoat,
-                ShipType::Submarine,
-                ShipType::Destroyer,
-                ShipType::Battleship,
-                ShipType::Carrier,
-            ] {
-                spawn_ship(parent, ship, &asset_server);
-            }
+                })
+                .with_children(|parent| {
+                    for y in 0..HEIGHT {
+                        parent
+                            .spawn(NodeBundle {
+                                style: Style {
+                                    width: Val::Percent(100.),
+                                    height: Val::Percent(100. / HEIGHT as f32),
+                                    flex_direction: FlexDirection::Row,
+                                    align_items: AlignItems::Center,
+                                    ..default()
+                                },
+                                ..default()
+                            })
+                            .with_children(|parent| {
+                                for x in 0..WIDTH {
+                                    parent.spawn((
+                                        ButtonBundle {
+                                            style: Style {
+                                                width: Val::Percent(90. / WIDTH as f32),
+                                                height: Val::Percent(90.),
+                                                margin: UiRect {
+                                                    left: Val::Auto,
+                                                    right: Val::Auto,
+                                                    top: Val::Auto,
+                                                    bottom: Val::Auto,
+                                                },
+                                                ..default()
+                                            },
+                                            background_color: BackgroundColor(Color::Rgba {
+                                                red: 40.,
+                                                green: 40.,
+                                                blue: 40.,
+                                                alpha: 1.,
+                                            }),
+                                            ..default()
+                                        },
+                                        SelectSlot { x, y },
+                                    ));
+                                }
+                            });
+                    }
+                });
+            spawn_ship(parent, ShipType::PatrolBoat, &asset_server);
+            spawn_ship(parent, ShipType::Submarine, &asset_server);
+            spawn_ship(parent, ShipType::Destroyer, &asset_server);
+            spawn_ship(parent, ShipType::Battleship, &asset_server);
+            spawn_ship(parent, ShipType::Carrier, &asset_server);
         });
 }
 
@@ -63,44 +106,38 @@ fn spawn_ship(parent: &mut ChildBuilder, ship: ShipType, asset_server: &Res<Asse
         .spawn((
             ButtonBundle {
                 style: Style {
-                    width: Val::Px(60.0),
-                    height: Val::Px(ship.len() as f32 * 50.),
-                    left: Val::Px(ship.id() as f32 * 100.),
+                    width: Val::Percent(80. / WIDTH as f32),
+                    height: Val::Percent(50. / HEIGHT as f32 * ship.len() as f32),
+                    left: Val::Percent(80. / WIDTH as f32 * ship.id() as f32),
                     position_type: PositionType::Absolute,
                     ..default()
                 },
                 background_color: BackgroundColor(Color::rgba(0., 0., 0., 0.)),
                 ..default()
             },
-            ship,
+            Ship {
+                placed: false,
+                x: 0,
+                y: 0,
+                dir: Dir::Vertical,
+                type_: ship,
+            },
         ))
         .with_children(|parent| {
             parent.spawn(ship.ressource(asset_server));
         });
 }
 
-// fn spawn_board(parent: &mut ChildBuilder) {
-//     for i in 0..HEIGHT {
-//         parent.spawn((ButtonBundle {
-//             style: Style {
-//                 flex_direction: FlexDirection::Row,
-//                 align_items: AlignItems::Center,
-//                 ..default()
-//             },
-//             ..default()
-//         }, Slot));
-//     }
-// }
-
 static mut SELECTED: Option<u8> = None;
 
 #[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
 fn drag_ship(
-    mut ships: Query<(&Interaction, &mut Style, &ShipType), (With<Button>, With<ShipType>)>,
+    mut ships: Query<(&Interaction, &mut Style, &mut Ship), (With<Button>, With<Ship>)>,
+    slots: Query<(&Interaction, &SelectSlot), (With<Button>, With<SelectSlot>)>,
     q_windows: Query<&Window, With<PrimaryWindow>>,
 ) {
-    for (interaction, _, ship) in &mut ships {
-        let nid = ship.id();
+    for (interaction, _, mut ship) in &mut ships {
+        let nid = ship.type_.id();
         if *interaction == Interaction::Pressed {
             unsafe {
                 SELECTED = Some(nid);
@@ -110,24 +147,32 @@ fn drag_ship(
                 unsafe {
                     SELECTED = None;
                 }
+                ship.placed = false;
+                for (interaction, slot) in &slots {
+                    if *interaction == Interaction::Hovered {
+                        (ship.x, ship.y, ship.placed) = (slot.x, slot.y, true);
+                        break;
+                    }
+                }
             }
         }
     }
 
     if let Some(id) = unsafe { SELECTED } {
         for (_, mut style, ship) in &mut ships {
-            if id == ship.id() {
-                let Some(position) = q_windows.single().cursor_position() else {
+            if id == ship.type_.id() {
+                let Some(Vec2 { x, y }) = q_windows.single().cursor_position() else {
                     return;
                 };
-                let Val::Px(height) = style.height else {
+                let Val::Percent(height) = style.height else {
                     return;
                 };
-                let Val::Px(width) = style.width else {
+                let Val::Percent(width) = style.width else {
                     return;
                 };
-                style.top = Val::Px(position.y - height / 2.);
-                style.left = Val::Px(position.x - width / 2.);
+
+                style.top = Val::Px(y - height * q_windows.single().height() / 200.);
+                style.left = Val::Px(x - width * q_windows.single().width() / 200.);
             }
         }
     }
