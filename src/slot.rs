@@ -65,8 +65,4 @@ pub struct Ship {
 }
 
 #[derive(Clone, Copy, PartialEq, Component)]
-#[allow(clippy::module_name_repetitions)]
-pub struct SelectSlot {
-    pub x: u8,
-    pub y: u8,
-}
+pub struct Overlay(pub u8);

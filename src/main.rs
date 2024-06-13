@@ -1,7 +1,7 @@
 mod slot;
 
 use bevy::{prelude::*, window::PrimaryWindow, winit::WinitSettings};
-use slot::{Dir, SelectSlot, Ship, ShipType};
+use slot::{Dir, Overlay, Ship, ShipType};
 
 pub const WIDTH: u8 = 21;
 pub const HEIGHT: u8 = 8;
@@ -51,7 +51,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                     ..default()
                 })
                 .with_children(|parent| {
-                    for y in 0..HEIGHT {
+                    for _ in 0..HEIGHT {
                         parent
                             .spawn(NodeBundle {
                                 style: Style {
@@ -64,34 +64,52 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                                 ..default()
                             })
                             .with_children(|parent| {
-                                for x in 0..WIDTH {
-                                    parent.spawn((
-                                        ButtonBundle {
-                                            style: Style {
-                                                width: Val::Percent(90. / WIDTH as f32),
-                                                height: Val::Percent(90.),
-                                                margin: UiRect {
-                                                    left: Val::Auto,
-                                                    right: Val::Auto,
-                                                    top: Val::Auto,
-                                                    bottom: Val::Auto,
-                                                },
-                                                ..default()
+                                for _ in 0..WIDTH {
+                                    parent.spawn(NodeBundle {
+                                        style: Style {
+                                            width: Val::Percent(90. / WIDTH as f32),
+                                            height: Val::Percent(90.),
+                                            margin: UiRect {
+                                                left: Val::Auto,
+                                                right: Val::Auto,
+                                                top: Val::Auto,
+                                                bottom: Val::Auto,
                                             },
-                                            background_color: BackgroundColor(Color::Rgba {
-                                                red: 40.,
-                                                green: 40.,
-                                                blue: 40.,
-                                                alpha: 1.,
-                                            }),
                                             ..default()
                                         },
-                                        SelectSlot { x, y },
-                                    ));
+                                        background_color: BackgroundColor(Color::Rgba {
+                                            red: 40.,
+                                            green: 40.,
+                                            blue: 40.,
+                                            alpha: 1.,
+                                        }),
+                                        ..default()
+                                    });
                                 }
                             });
                     }
                 });
+            for i in 0..5 {
+                parent.spawn((
+                    NodeBundle {
+                        style: Style {
+                            width: Val::Percent(72. / WIDTH as f32),
+                            height: Val::Percent(45. / HEIGHT as f32),
+                            position_type: PositionType::Absolute,
+                            ..default()
+                        },
+                        background_color: BackgroundColor(Color::Rgba {
+                            red: 0.,
+                            green: 40.,
+                            blue: 0.,
+                            alpha: 0.5,
+                        }),
+                        visibility: Visibility::Hidden,
+                        ..default()
+                    },
+                    Overlay(i),
+                ));
+            }
             spawn_ship(parent, ShipType::PatrolBoat, &asset_server);
             spawn_ship(parent, ShipType::Submarine, &asset_server);
             spawn_ship(parent, ShipType::Destroyer, &asset_server);
@@ -130,50 +148,193 @@ fn spawn_ship(parent: &mut ChildBuilder, ship: ShipType, asset_server: &Res<Asse
 
 static mut SELECTED: Option<u8> = None;
 
-#[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
+#[allow(
+    clippy::needless_pass_by_value,
+    clippy::type_complexity,
+    clippy::cast_lossless
+)]
 fn drag_ship(
-    mut ships: Query<(&Interaction, &mut Style, &mut Ship), (With<Button>, With<Ship>)>,
-    slots: Query<(&Interaction, &SelectSlot), (With<Button>, With<SelectSlot>)>,
+    mut ships: Query<
+        (&Interaction, &mut Style, &mut Ship),
+        (With<Button>, Without<Overlay>, With<Ship>),
+    >,
+    mut overlay: Query<
+        (&mut Visibility, &mut Style, &Overlay),
+        (With<Node>, Without<Ship>, With<Overlay>),
+    >,
     q_windows: Query<&Window, With<PrimaryWindow>>,
 ) {
-    for (interaction, _, mut ship) in &mut ships {
+    for (interaction, mut style, mut ship) in &mut ships {
         let nid = ship.type_.id();
         if *interaction == Interaction::Pressed {
+            ship.placed = false;
             unsafe {
                 SELECTED = Some(nid);
             }
+
+            for (mut vis, _, _) in &mut overlay {
+                *vis = Visibility::Hidden;
+            }
+            let Some(Vec2 { x, y }) = q_windows.single().cursor_position() else {
+                return;
+            };
+            let Val::Percent(height) = style.height else {
+                return;
+            };
+            let Val::Percent(width) = style.width else {
+                return;
+            };
+
+            let mut top = (y - height * q_windows.single().height() / 200.)
+                / q_windows.single().height()
+                * 100.;
+            let mut left =
+                (x - width * q_windows.single().width() / 200.) / q_windows.single().width() * 100.;
+
+            style.top = Val::Percent(top);
+            style.left = Val::Percent(left);
+
+            top += height / 2.;
+            left += width / 2.;
+
+            if !(40. ..=90.).contains(&top) || !(10. ..=90.).contains(&left) {
+                return;
+            }
+
+            let Some((top, left)) = update_ship_coord(left, top, &mut ship) else {
+                return;
+            };
+
+            for (mut vis, mut style, ov) in &mut overlay {
+                if ov.0 < ship.type_.len() {
+                    *vis = Visibility::Visible;
+                    match ship.dir {
+                        Dir::Horizontal => {
+                            style.top = Val::Percent(top);
+                            style.left =
+                                Val::Percent(left + ov.0 as f32 * width / ship.type_.len() as f32);
+                        }
+                        Dir::Vertical => {
+                            style.top =
+                                Val::Percent(top + ov.0 as f32 * height / ship.type_.len() as f32);
+                            style.left = Val::Percent(left);
+                        }
+                    }
+                }
+            }
+
+            return;
         } else if let Some(id) = unsafe { SELECTED } {
             if id == nid {
                 unsafe {
                     SELECTED = None;
                 }
-                ship.placed = false;
-                for (interaction, slot) in &slots {
-                    if *interaction == Interaction::Hovered {
-                        (ship.x, ship.y, ship.placed) = (slot.x, slot.y, true);
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    if let Some(id) = unsafe { SELECTED } {
-        for (_, mut style, ship) in &mut ships {
-            if id == ship.type_.id() {
-                let Some(Vec2 { x, y }) = q_windows.single().cursor_position() else {
+                let Val::Percent(mut top) = style.top else {
                     return;
                 };
-                let Val::Percent(height) = style.height else {
+                let Val::Percent(mut left) = style.left else {
                     return;
                 };
                 let Val::Percent(width) = style.width else {
                     return;
                 };
+                let Val::Percent(height) = style.height else {
+                    break;
+                };
+                left += width / 2.;
+                top += height / 2.;
 
-                style.top = Val::Px(y - height * q_windows.single().height() / 200.);
-                style.left = Val::Px(x - width * q_windows.single().width() / 200.);
+                if !(40. ..=90.).contains(&top) || !(10. ..=90.).contains(&left) {
+                    return;
+                }
+                let Some((top, left)) = update_ship_coord(left, top, &mut ship) else {
+                    return;
+                };
+
+                ship.placed = true;
+                for (mut vis, _, _) in &mut overlay {
+                    *vis = Visibility::Hidden;
+                }
+                style.top = Val::Percent(top);
+                style.left = Val::Percent(left);
+
+                return;
             }
         }
     }
+}
+
+#[allow(
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_lossless,
+    clippy::cast_possible_wrap
+)]
+fn update_ship_coord(left: f32, top: f32, ship: &mut Ship) -> Option<(f32, f32)> {
+    ship.x = ((left - 10.) / 80. * (WIDTH + 1) as f32 - 0.5).floor() as u8;
+    ship.y = ((top - 40.) / 50. * (HEIGHT + 1) as f32 - 0.5).floor() as u8;
+
+    match ship.dir {
+        Dir::Horizontal => {
+            if ship.x
+                < match ship.type_ {
+                    ShipType::PatrolBoat => 0,
+                    ShipType::Submarine | ShipType::Destroyer => 1,
+                    ShipType::Battleship | ShipType::Carrier => 2,
+                }
+            {
+                return None;
+            }
+            if ship.x
+                > WIDTH
+                    - match ship.type_ {
+                        ShipType::PatrolBoat | ShipType::Submarine | ShipType::Destroyer => 2,
+                        ShipType::Battleship | ShipType::Carrier => 3,
+                    }
+            {
+                return None;
+            }
+        }
+        Dir::Vertical => {
+            if ship.y
+                < match ship.type_ {
+                    ShipType::PatrolBoat => 0,
+                    ShipType::Submarine | ShipType::Destroyer => 1,
+                    ShipType::Battleship | ShipType::Carrier => 2,
+                }
+            {
+                return None;
+            }
+            if ship.y
+                > HEIGHT
+                    - match ship.type_ {
+                        ShipType::PatrolBoat | ShipType::Submarine | ShipType::Destroyer => 2,
+                        ShipType::Battleship | ShipType::Carrier => 3,
+                    }
+            {
+                return None;
+            }
+        }
+    }
+    let left = (ship.x as i8
+        - match (ship.dir, ship.type_) {
+            (Dir::Vertical, _) | (Dir::Horizontal, ShipType::PatrolBoat) => 0,
+            (Dir::Horizontal, ShipType::Submarine | ShipType::Destroyer) => 1,
+            (Dir::Horizontal, ShipType::Battleship) if ship.x > 2 => 1,
+            (Dir::Horizontal, ShipType::Battleship | ShipType::Carrier) => 2,
+        }) as f32
+        / WIDTH as f32
+        * 80.
+        + 10.;
+    let top = (ship.y as i8
+        - match (ship.dir, ship.type_) {
+            (Dir::Horizontal, _) | (Dir::Vertical, ShipType::PatrolBoat) => 0,
+            (Dir::Vertical, ShipType::Submarine | ShipType::Destroyer) => 1,
+            (Dir::Vertical, ShipType::Battleship) if ship.y > 2 => 1,
+            (Dir::Vertical, ShipType::Battleship | ShipType::Carrier) => 2,
+        }) as f32
+        / HEIGHT as f32
+        * 50.
+        + 40.;
+    Some((top, left))
 }
