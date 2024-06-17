@@ -1,6 +1,13 @@
 mod slot;
 
-use bevy::{prelude::*, window::PrimaryWindow, winit::WinitSettings};
+use std::f32::consts::PI;
+
+use bevy::{
+    input::{mouse::MouseButtonInput, ButtonState},
+    prelude::*,
+    window::PrimaryWindow,
+    winit::WinitSettings,
+};
 use slot::{Dir, Overlay, Ship, ShipType};
 
 pub const WIDTH: u8 = 21;
@@ -29,8 +36,8 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands
         .spawn(NodeBundle {
             style: Style {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
+                width: Val::Percent(100.),
+                height: Val::Percent(100.),
                 ..default()
             },
             background_color: Color::BLACK.into(),
@@ -107,7 +114,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                         visibility: Visibility::Hidden,
                         ..default()
                     },
-                    Overlay(i),
+                    Overlay { id: i },
                 ));
             }
             spawn_ship(parent, ShipType::PatrolBoat, &asset_server);
@@ -130,7 +137,7 @@ fn spawn_ship(parent: &mut ChildBuilder, ship: ShipType, asset_server: &Res<Asse
                     position_type: PositionType::Absolute,
                     ..default()
                 },
-                background_color: BackgroundColor(Color::rgba(0., 0., 0., 0.)),
+                background_color: BackgroundColor(Color::rgba(1., 0., 0., 0.)),
                 ..default()
             },
             Ship {
@@ -154,8 +161,10 @@ static mut SELECTED: Option<u8> = None;
     clippy::cast_lossless
 )]
 fn drag_ship(
+    mut transforms: Query<(&mut Transform, &mut Style), (Without<Overlay>, Without<Ship>)>,
+    mut evr_click: EventReader<MouseButtonInput>,
     mut ships: Query<
-        (&Interaction, &mut Style, &mut Ship),
+        (&mut Children, &Interaction, &mut Style, &mut Ship),
         (With<Button>, Without<Overlay>, With<Ship>),
     >,
     mut overlay: Query<
@@ -164,8 +173,45 @@ fn drag_ship(
     >,
     q_windows: Query<&Window, With<PrimaryWindow>>,
 ) {
-    for (interaction, mut style, mut ship) in &mut ships {
+    let right = evr_click.read().last().map_or(false, |button| {
+        button.state == ButtonState::Released && button.button == MouseButton::Right
+    });
+    for (childs, interaction, mut style, mut ship) in &mut ships {
         let nid = ship.type_.id();
+        if right && *interaction == Interaction::Hovered {
+            let (mut image, mut image_style) = transforms
+                .get_mut(*childs.first().expect("have image"))
+                .expect("have image2");
+            image.rotate_local_z(PI / 2.);
+            image.scale *= match ship.dir {
+                Dir::Vertical => ship.type_.len() as f32,
+                Dir::Horizontal => 1. / ship.type_.len() as f32,
+            };
+            let ratio = q_windows.single().width() / q_windows.single().height();
+            (
+                ship.placed,
+                ship.dir,
+                image_style.left,
+                style.width,
+                style.height,
+            ) = match ship.dir {
+                Dir::Vertical => (
+                    ship.placed && ship.x + ship.type_.len() < WIDTH,
+                    Dir::Horizontal,
+                    Val::Percent(50.),
+                    Val::Percent(50. / HEIGHT as f32 * ship.type_.len() as f32) * (1. / ratio),
+                    Val::Percent(80. / WIDTH as f32) * ratio,
+                ),
+                Dir::Horizontal => (
+                    ship.placed && ship.y + ship.type_.len() < HEIGHT,
+                    Dir::Vertical,
+                    Val::Percent(0.),
+                    Val::Percent(80. / WIDTH as f32),
+                    Val::Percent(50. / HEIGHT as f32 * ship.type_.len() as f32),
+                ),
+            };
+            continue;
+        }
         if *interaction == Interaction::Pressed {
             ship.placed = false;
             unsafe {
@@ -206,17 +252,17 @@ fn drag_ship(
             };
 
             for (mut vis, mut style, ov) in &mut overlay {
-                if ov.0 < ship.type_.len() {
+                if ov.id < ship.type_.len() {
                     *vis = Visibility::Visible;
                     match ship.dir {
                         Dir::Horizontal => {
                             style.top = Val::Percent(top);
                             style.left =
-                                Val::Percent(left + ov.0 as f32 * width / ship.type_.len() as f32);
+                                Val::Percent(left + ov.id as f32 * width / ship.type_.len() as f32);
                         }
                         Dir::Vertical => {
                             style.top =
-                                Val::Percent(top + ov.0 as f32 * height / ship.type_.len() as f32);
+                                Val::Percent(top + ov.id as f32 * height / ship.type_.len() as f32);
                             style.left = Val::Percent(left);
                         }
                     }

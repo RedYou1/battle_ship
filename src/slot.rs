@@ -65,4 +65,6 @@ pub struct Ship {
 }
 
 #[derive(Clone, Copy, PartialEq, Component)]
-pub struct Overlay(pub u8);
+pub struct Overlay {
+    pub id: u8,
+}
